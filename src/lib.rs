@@ -201,7 +201,12 @@ pub fn encode_date(unix: i64) -> [u16; 2] {
 pub fn format_date(unix: i64) -> String {
     let (y, m, d) = civil_from_days(unix.div_euclid(86400));
     let s = unix.rem_euclid(86400);
-    format!("{y:04}-{m:02}-{d:02} {:02}:{:02}:{:02}", s / 3600, s / 60 % 60, s % 60)
+    format!(
+        "{y:04}-{m:02}-{d:02} {:02}:{:02}:{:02}",
+        s / 3600,
+        s / 60 % 60,
+        s % 60
+    )
 }
 
 fn system_now() -> i64 {
@@ -240,7 +245,13 @@ pub fn letters(bits: u8, dir: bool) -> String {
     let table: &[(u8, char)] = if dir {
         &[(0x01, 'r'), (0x04, 'c'), (0x08, 'b'), (0x10, 'm')]
     } else {
-        &[(0x01, 'r'), (0x02, 'w'), (0x04, 'a'), (0x08, 'e'), (0x10, 'm')]
+        &[
+            (0x01, 'r'),
+            (0x02, 'w'),
+            (0x04, 'a'),
+            (0x08, 'e'),
+            (0x10, 'm'),
+        ]
     };
     table
         .iter()
@@ -291,11 +302,21 @@ pub fn validate_name(name: &str) -> Result<()> {
 pub fn sanitize_name(name: &str) -> String {
     let clean: String = name
         .chars()
-        .map(|c| if c.is_ascii_alphanumeric() || matches!(c, '_' | '.' | '$') { c } else { '_' })
+        .map(|c| {
+            if c.is_ascii_alphanumeric() || matches!(c, '_' | '.' | '$') {
+                c
+            } else {
+                '_'
+            }
+        })
         .collect();
     let clean = clean.trim_start_matches('$');
     if clean.len() <= 16 {
-        return if clean.is_empty() { "file".into() } else { clean.into() };
+        return if clean.is_empty() {
+            "file".into()
+        } else {
+            clean.into()
+        };
     }
     match clean.rfind('.') {
         Some(dot) if clean.len() - dot <= 5 && dot > 0 => {
@@ -322,7 +343,9 @@ pub fn looks_like_rs_text(data: &[u8]) -> bool {
 
 /// Replace QNX 2's RS line separators with LF.
 pub fn rs_to_lf(data: &[u8]) -> Vec<u8> {
-    data.iter().map(|&b| if b == RS { b'\n' } else { b }).collect()
+    data.iter()
+        .map(|&b| if b == RS { b'\n' } else { b })
+        .collect()
 }
 
 /// Replace LF and CR LF line endings with QNX 2's RS.
@@ -351,11 +374,19 @@ pub fn looks_like_qnx2<R: Read + Seek>(reader: &mut R, offset: u64) -> bool {
     }
     let root = &b1[ROOT_AT..ROOT_AT + ENTRY];
     let first = u32::from_le_bytes([root[1], root[2], root[3], root[4]]) as u64;
-    if root[0] & USED == 0 || root[26] & DIRECTORY == 0 || root[31] != 0 || !(2..65536).contains(&first) {
+    if root[0] & USED == 0
+        || root[26] & DIRECTORY == 0
+        || root[31] != 0
+        || !(2..65536).contains(&first)
+    {
         return false;
     }
     let mut hdr = [0u8; 16];
-    if reader.seek(SeekFrom::Start(offset + (first - 1) * BLOCK)).is_err() || reader.read_exact(&mut hdr).is_err() {
+    if reader
+        .seek(SeekFrom::Start(offset + (first - 1) * BLOCK))
+        .is_err()
+        || reader.read_exact(&mut hdr).is_err()
+    {
         return false;
     }
     let word = |o: usize| u32::from_le_bytes([hdr[o], hdr[o + 1], hdr[o + 2], hdr[o + 3]]) as u64;
@@ -526,7 +557,10 @@ impl Dirent {
             gperms: b[24],
             perms: b[25],
             attr: b[26],
-            date: [u16::from_le_bytes([b[27], b[28]]), u16::from_le_bytes([b[29], b[30]])],
+            date: [
+                u16::from_le_bytes([b[27], b[28]]),
+                u16::from_le_bytes([b[29], b[30]]),
+            ],
         }
     }
 
@@ -563,9 +597,14 @@ fn join(parent: &str, name: &str) -> String {
 fn split_path(path: &str) -> Result<(String, String)> {
     let p = path.trim_end_matches('/');
     match p.rsplit_once('/') {
-        Some((parent, name)) if !name.is_empty() => {
-            Ok((if parent.is_empty() { "/".into() } else { parent.into() }, name.into()))
-        }
+        Some((parent, name)) if !name.is_empty() => Ok((
+            if parent.is_empty() {
+                "/".into()
+            } else {
+                parent.into()
+            },
+            name.into(),
+        )),
         None if !p.is_empty() => Ok(("/".into(), p.into())),
         _ => Err(Error::InvalidData(format!("{path:?} names no entry"))),
     }
@@ -608,7 +647,10 @@ impl<D: Read + Seek> Volume<D> {
         };
         // The bitmap file sizes the volume (one bit per block) and counts the free blocks.
         if let Ok(entries) = vol.read_dir(root.first) {
-            if let Some(bm) = entries.iter().find(|e| e.in_use() && e.name == "bitmap" && !e.is_dir()) {
+            if let Some(bm) = entries
+                .iter()
+                .find(|e| e.in_use() && e.name == "bitmap" && !e.is_dir())
+            {
                 if let Ok(map) = vol.read_chain(bm.first, usize::MAX) {
                     vol.total_blocks = (map.len() as u64 * 8).min(vol.total_blocks.max(1));
                     vol.free_blocks = map
@@ -714,7 +756,9 @@ impl<D: Read + Seek> Volume<D> {
     /// Whether the bitmap marks block `n` in use; `None` past its end.
     fn marked(&self, n: u64) -> Option<bool> {
         let i = n.checked_sub(1)?;
-        self.bitmap.get((i / 8) as usize).map(|b| b >> (i % 8) & 1 != 0)
+        self.bitmap
+            .get((i / 8) as usize)
+            .map(|b| b >> (i % 8) & 1 != 0)
     }
 
     /// Every extent of the chain starting at `first`.
@@ -724,14 +768,23 @@ impl<D: Read + Seek> Volume<D> {
         let mut seen = HashSet::new();
         while at != 0 {
             if at > self.total_blocks.max(1) || !seen.insert(at) || out.len() >= MAX_EXTENTS {
-                return Err(Error::InvalidData(format!("qnx2: extent chain breaks at block {at}")));
+                return Err(Error::InvalidData(format!(
+                    "qnx2: extent chain breaks at block {at}"
+                )));
             }
             let mut hdr = [0u8; 16];
-            self.dev.seek(SeekFrom::Start(self.offset + (at - 1) * BLOCK))?;
+            self.dev
+                .seek(SeekFrom::Start(self.offset + (at - 1) * BLOCK))?;
             self.dev.read_exact(&mut hdr)?;
-            let w = |o: usize| u32::from_le_bytes([hdr[o], hdr[o + 1], hdr[o + 2], hdr[o + 3]]) as u64;
+            let w =
+                |o: usize| u32::from_le_bytes([hdr[o], hdr[o + 1], hdr[o + 2], hdr[o + 3]]) as u64;
             let (prev, next, size, bound) = (w(0), w(4), w(8), w(12));
-            out.push(Extent { block: at, span: bound + 1, size: size.min((bound + 1) * BLOCK - XTNT_HDR), prev });
+            out.push(Extent {
+                block: at,
+                span: bound + 1,
+                size: size.min((bound + 1) * BLOCK - XTNT_HDR),
+                prev,
+            });
             at = next;
         }
         Ok(out)
@@ -747,7 +800,9 @@ impl<D: Read + Seek> Volume<D> {
             let take = (x.size as usize).min(max - out.len());
             let start = out.len();
             out.resize(start + take, 0);
-            self.dev.seek(SeekFrom::Start(self.offset + (x.block - 1) * BLOCK + XTNT_HDR))?;
+            self.dev.seek(SeekFrom::Start(
+                self.offset + (x.block - 1) * BLOCK + XTNT_HDR,
+            ))?;
             self.dev.read_exact(&mut out[start..])?;
         }
         Ok(out)
@@ -765,7 +820,10 @@ impl<D: Read + Seek> Volume<D> {
         }
         let index = u16::from_le_bytes([data[2], data[3]]);
         let start = if index & 0x8000 != 0 { 6 } else { 4 };
-        Ok(data[start..].chunks_exact(ENTRY).filter_map(Dirent::parse).collect())
+        Ok(data[start..]
+            .chunks_exact(ENTRY)
+            .filter_map(Dirent::parse)
+            .collect())
     }
 
     /// What became of a deleted entry's blocks.
@@ -790,7 +848,11 @@ impl<D: Read + Seek> Volume<D> {
 
     fn entry_for(&mut self, parent: &str, d: &Dirent) -> Entry {
         let dir = d.is_dir();
-        let size = if dir { 0 } else { self.file_len(d.first).unwrap_or(0) };
+        let size = if dir {
+            0
+        } else {
+            self.file_len(d.first).unwrap_or(0)
+        };
         let deleted = (!d.in_use()).then(|| self.deleted_state(d));
         Entry {
             name: d.name.clone(),
@@ -811,12 +873,21 @@ impl<D: Read + Seek> Volume<D> {
     }
 
     /// Walk every reachable file, recording which blocks each holds.
-    fn walk(&mut self, first: u32, path: &str, depth: usize, owners: &mut HashMap<u64, String>, report: &mut Walk) {
+    fn walk(
+        &mut self,
+        first: u32,
+        path: &str,
+        depth: usize,
+        owners: &mut HashMap<u64, String>,
+        report: &mut Walk,
+    ) {
         self.claim(first, path, owners, report, None);
         let dirents = match self.read_dir(first) {
             Ok(d) => d,
             Err(e) => {
-                report.errors.push(issue("UnreadableDir", format!("{path}: {e}")));
+                report
+                    .errors
+                    .push(issue("UnreadableDir", format!("{path}: {e}")));
                 return;
             }
         };
@@ -832,7 +903,10 @@ impl<D: Read + Seek> Volume<D> {
             }
             if d.is_dir() {
                 if depth >= 64 {
-                    report.errors.push(issue("DirTooDeep", format!("{child}: directories nest past 64 levels")));
+                    report.errors.push(issue(
+                        "DirTooDeep",
+                        format!("{child}: directories nest past 64 levels"),
+                    ));
                 } else {
                     self.walk(d.first, &child, depth + 1, owners, report);
                 }
@@ -855,7 +929,9 @@ impl<D: Read + Seek> Volume<D> {
         let xs = match self.extents(first) {
             Ok(xs) => xs,
             Err(e) => {
-                report.errors.push(issue("BrokenChain", format!("{path}: {e}")));
+                report
+                    .errors
+                    .push(issue("BrokenChain", format!("{path}: {e}")));
                 return;
             }
         };
@@ -865,18 +941,27 @@ impl<D: Read + Seek> Volume<D> {
             if x.prev != prev {
                 report.warnings.push(issue(
                     "ExtentLink",
-                    format!("{path}: extent at block {} points back to {} (expected {prev})", x.block, x.prev),
+                    format!(
+                        "{path}: extent at block {} points back to {} (expected {prev})",
+                        x.block, x.prev
+                    ),
                 ));
             }
             prev = x.block;
             for b in x.block..x.block + x.span {
                 held += 1;
                 if b > self.total_blocks {
-                    report.errors.push(issue("BlockOutOfRange", format!("{path}: block {b} is past the end of the volume")));
+                    report.errors.push(issue(
+                        "BlockOutOfRange",
+                        format!("{path}: block {b} is past the end of the volume"),
+                    ));
                     continue;
                 }
                 if let Some(other) = owners.insert(b, path.to_string()) {
-                    report.errors.push(issue("CrossLinked", format!("block {b} is held by both {other} and {path}")));
+                    report.errors.push(issue(
+                        "CrossLinked",
+                        format!("block {b} is held by both {other} and {path}"),
+                    ));
                 }
                 if self.marked(b) == Some(false) {
                     report.unmarked.push(b);
@@ -887,7 +972,10 @@ impl<D: Read + Seek> Volume<D> {
             if u64::from(n) + 1 != held {
                 report.warnings.push(issue(
                     "BlockCount",
-                    format!("{path}: entry says {} blocks, its extents hold {held}", u64::from(n) + 1),
+                    format!(
+                        "{path}: entry says {} blocks, its extents hold {held}",
+                        u64::from(n) + 1
+                    ),
                 ));
             }
         }
@@ -899,7 +987,10 @@ impl<D: Read + Seek> Volume<D> {
         let pieces: Vec<(u64, u64)> = if first == 1 {
             vec![(1, BLOCK - XTNT_HDR)]
         } else {
-            self.extents(first)?.iter().map(|x| (x.block, x.size)).collect()
+            self.extents(first)?
+                .iter()
+                .map(|x| (x.block, x.size))
+                .collect()
         };
         let mut out = Vec::new();
         let mut left = len;
@@ -917,7 +1008,9 @@ impl<D: Read + Seek> Volume<D> {
             off = 0;
         }
         if left > 0 {
-            return Err(Error::InvalidData(format!("qnx2: stream of block {first} is shorter than expected")));
+            return Err(Error::InvalidData(format!(
+                "qnx2: stream of block {first} is shorter than expected"
+            )));
         }
         Ok(out)
     }
@@ -938,7 +1031,11 @@ impl<D: Read + Seek> Volume<D> {
         }
         let mut h = [0u8; 4];
         self.read_stream(dir, 0, &mut h)?;
-        Ok(if u16::from_le_bytes([h[2], h[3]]) & 0x8000 != 0 { 6 } else { 4 })
+        Ok(if u16::from_le_bytes([h[2], h[3]]) & 0x8000 != 0 {
+            6
+        } else {
+            4
+        })
     }
 
     fn read_entry(&mut self, loc: EntryLoc) -> Result<[u8; ENTRY]> {
@@ -970,9 +1067,14 @@ impl<D: Read + Seek> Volume<D> {
         self.read_stream(dir, 0, &mut h)?;
         let index = u16::from_le_bytes([h[2], h[3]]);
         if index & 0x8000 != 0 {
-            return Err(Error::Unsupported("qnx2: extended directory headers are not supported for editing".into()));
+            return Err(Error::Unsupported(
+                "qnx2: extended directory headers are not supported for editing".into(),
+            ));
         }
-        Ok(EntryLoc { dir: u32::from(u16::from_le_bytes([h[0], h[1]])), slot: index as usize })
+        Ok(EntryLoc {
+            dir: u32::from(u16::from_le_bytes([h[0], h[1]])),
+            slot: index as usize,
+        })
     }
 
     /// The in-use entry named `name` with first extent `first` in directory `dir`.
@@ -1002,31 +1104,48 @@ impl<D: Read + Seek> Volume<D> {
         let mut errors = walk.errors;
         let mut warnings = walk.warnings;
         if self.bitmap.is_empty() {
-            warnings.push(issue("NoBitmap", "the root has no readable bitmap file, so free space was not checked".into()));
+            warnings.push(issue(
+                "NoBitmap",
+                "the root has no readable bitmap file, so free space was not checked".into(),
+            ));
         } else {
             walk.unmarked.sort_unstable();
             walk.unmarked.dedup();
             if !walk.unmarked.is_empty() {
                 errors.push(issue(
                     "UnmarkedBlocks",
-                    format!("{} blocks held by files are free in the bitmap: {}", walk.unmarked.len(), ranges(&walk.unmarked)),
+                    format!(
+                        "{} blocks held by files are free in the bitmap: {}",
+                        walk.unmarked.len(),
+                        ranges(&walk.unmarked)
+                    ),
                 ));
             }
             // Block 1 and a boot loader (blocks 3 up to the root) belong to no file.
             let reserved = |b: u64| b == 1 || (b >= 3 && b < u64::from(root));
             let orphans: Vec<u64> = (1..=self.total_blocks)
-                .filter(|&b| self.marked(b) == Some(true) && !owners.contains_key(&b) && !reserved(b))
+                .filter(|&b| {
+                    self.marked(b) == Some(true) && !owners.contains_key(&b) && !reserved(b)
+                })
                 .collect();
             // The 3.00 formatter marks the volume's last block in use; nothing is lost there.
-            let (last, lost): (Vec<u64>, Vec<u64>) = orphans.into_iter().partition(|&b| b == self.total_blocks);
+            let (last, lost): (Vec<u64>, Vec<u64>) =
+                orphans.into_iter().partition(|&b| b == self.total_blocks);
             if !lost.is_empty() {
                 warnings.push(issue(
                     "OrphanedBlocks",
-                    format!("{} blocks are marked in use but no file holds them: {}", lost.len(), ranges(&lost)),
+                    format!(
+                        "{} blocks are marked in use but no file holds them: {}",
+                        lost.len(),
+                        ranges(&lost)
+                    ),
                 ));
             }
             if !last.is_empty() {
-                let mut i = issue("LastBlockReserved", format!("the last block ({}) is marked in use", self.total_blocks));
+                let mut i = issue(
+                    "LastBlockReserved",
+                    format!("the last block ({}) is marked in use", self.total_blocks),
+                );
                 i.debug = true;
                 warnings.push(i);
             }
@@ -1061,7 +1180,8 @@ impl<D: Read + Write + Seek> Volume<D> {
     }
 
     fn write_block_bytes(&mut self, block: u64, off: u64, data: &[u8]) -> Result<()> {
-        self.dev.seek(SeekFrom::Start(self.offset + (block - 1) * BLOCK + off))?;
+        self.dev
+            .seek(SeekFrom::Start(self.offset + (block - 1) * BLOCK + off))?;
         self.dev.write_all(data)?;
         Ok(())
     }
@@ -1077,9 +1197,14 @@ impl<D: Read + Write + Seek> Volume<D> {
     /// Set or clear the bitmap bits of `count` blocks from `start`, in memory and on disk.
     fn mark(&mut self, start: u64, count: u64, used: bool) -> Result<()> {
         if self.bm_first == 0 {
-            return Err(Error::Unsupported("qnx2: the volume has no bitmap file".into()));
+            return Err(Error::Unsupported(
+                "qnx2: the volume has no bitmap file".into(),
+            ));
         }
-        let (lo, hi) = (((start - 1) / 8) as usize, ((start + count - 2) / 8) as usize);
+        let (lo, hi) = (
+            ((start - 1) / 8) as usize,
+            ((start + count - 2) / 8) as usize,
+        );
         for b in start..start + count {
             let (i, bit) = (((b - 1) / 8) as usize, (b - 1) % 8);
             let was = self.bitmap[i] >> bit & 1 != 0;
@@ -1139,7 +1264,10 @@ impl<D: Read + Write + Seek> Volume<D> {
             }
         }
         if left > 0 || out.is_empty() {
-            return Err(Error::DiskFull(format!("{len} bytes do not fit in {} free blocks", self.free_blocks)));
+            return Err(Error::DiskFull(format!(
+                "{len} bytes do not fit in {} free blocks",
+                self.free_blocks
+            )));
         }
         out.sort_unstable();
         for &(start, n) in &out {
@@ -1149,17 +1277,27 @@ impl<D: Read + Write + Seek> Volume<D> {
     }
 
     /// Write `len` bytes from `data` as an extent chain over `runs`; returns (last extent, blocks).
-    fn write_chain(&mut self, runs: &[(u64, u64)], data: &mut dyn Read, mut len: u64) -> Result<(u64, u64)> {
+    fn write_chain(
+        &mut self,
+        runs: &[(u64, u64)],
+        data: &mut dyn Read,
+        mut len: u64,
+    ) -> Result<(u64, u64)> {
         let mut buf = vec![0u8; 64 * 1024];
         for (i, &(start, n)) in runs.iter().enumerate() {
             let size = len.min(n * BLOCK - XTNT_HDR);
             let prev = if i == 0 { 0 } else { runs[i - 1].0 };
             let next = runs.get(i + 1).map_or(0, |r| r.0);
-            self.write_header(start, [prev as u32, next as u32, size as u32, (n - 1) as u32])?;
+            self.write_header(
+                start,
+                [prev as u32, next as u32, size as u32, (n - 1) as u32],
+            )?;
             // Zero the extent so no stale bytes follow the data.
             let zeros = vec![0u8; (n * BLOCK - XTNT_HDR) as usize];
             self.write_block_bytes(start, XTNT_HDR, &zeros)?;
-            self.dev.seek(SeekFrom::Start(self.offset + (start - 1) * BLOCK + XTNT_HDR))?;
+            self.dev.seek(SeekFrom::Start(
+                self.offset + (start - 1) * BLOCK + XTNT_HDR,
+            ))?;
             let mut left = size;
             while left > 0 {
                 let k = left.min(buf.len() as u64) as usize;
@@ -1185,7 +1323,9 @@ impl<D: Read + Write + Seek> Volume<D> {
         let xs = self.extents(dir)?;
         let last = *xs.last().expect("a directory has an extent");
         let room = last.span * BLOCK - XTNT_HDR - last.size;
-        let header = |x: &Extent, next: u64, size: u64| [x.prev as u32, next as u32, size as u32, (x.span - 1) as u32];
+        let header = |x: &Extent, next: u64, size: u64| {
+            [x.prev as u32, next as u32, size as u32, (x.span - 1) as u32]
+        };
         if room >= ENTRY as u64 {
             self.write_header(last.block, header(&last, 0, last.size + ENTRY as u64))?;
         } else {
@@ -1275,7 +1415,10 @@ impl<D: Read + Write + Seek> Volume<D> {
     }
 
     fn owner_of(opts: &NewEntry) -> (u8, u8) {
-        (opts.uid.map_or(255, |u| u.min(255) as u8), opts.gid.map_or(255, |g| g.min(255) as u8))
+        (
+            opts.uid.map_or(255, |u| u.min(255) as u8),
+            opts.gid.map_or(255, |g| g.min(255) as u8),
+        )
     }
 
     /// Create a file of `len` bytes read from `data` in directory `parent`.
@@ -1296,7 +1439,16 @@ impl<D: Read + Write + Seek> Volume<D> {
         let (last, blocks) = self.write_chain(&runs, data, len)?;
         let bits = opts.mode.map_or((0x17, 0x01, 0x01), |m| qnx_bits(m, false));
         let when = opts.mtime.unwrap_or_else(|| self.now());
-        let e = Self::new_entry(name, runs[0].0, last, blocks, runs.len(), Self::owner_of(opts), bits, encode_date(when));
+        let e = Self::new_entry(
+            name,
+            runs[0].0,
+            last,
+            blocks,
+            runs.len(),
+            Self::owner_of(opts),
+            bits,
+            encode_date(when),
+        );
         let slot = self.free_slot(dir)?;
         self.write_entry(EntryLoc { dir, slot }, &e)?;
         self.touch_dir(dir)?;
@@ -1322,7 +1474,16 @@ impl<D: Read + Write + Seek> Volume<D> {
         self.write_block_bytes(nb, XTNT_HDR, &body)?;
         let bits = opts.mode.map_or((0x35, 0x21, 0x21), |m| qnx_bits(m, true));
         let when = opts.mtime.unwrap_or_else(|| self.now());
-        let e = Self::new_entry(name, nb, nb, 1, 1, Self::owner_of(opts), bits, encode_date(when));
+        let e = Self::new_entry(
+            name,
+            nb,
+            nb,
+            1,
+            1,
+            Self::owner_of(opts),
+            bits,
+            encode_date(when),
+        );
         self.write_entry(EntryLoc { dir, slot }, &e)?;
         self.touch_dir(dir)?;
         Ok(self.entry_for(&parent.path, &Dirent::decode(&e)))
@@ -1336,7 +1497,10 @@ impl<D: Read + Write + Seek> Volume<D> {
         let mut e = self.read_entry(loc)?;
         let d = Dirent::decode(&e);
         if d.is_dir() && self.dir_slots(d.first)?.iter().any(|s| s[0] & USED != 0) {
-            return Err(Error::InvalidData(format!("directory {} is not empty", entry.path)));
+            return Err(Error::InvalidData(format!(
+                "directory {} is not empty",
+                entry.path
+            )));
         }
         let xs = self.extents(d.first)?;
         for x in &xs {
@@ -1384,7 +1548,9 @@ impl<D: Read + Write + Seek> Volume<D> {
     /// Set the owner: `uid` is the member, `gid` the group, each 0-255.
     pub fn set_owner(&mut self, entry: &Entry, uid: u32, gid: u32) -> Result<()> {
         if uid > 255 || gid > 255 {
-            return Err(Error::InvalidData("qnx2: group and member are 0-255".into()));
+            return Err(Error::InvalidData(
+                "qnx2: group and member are 0-255".into(),
+            ));
         }
         let loc = self.loc_of(entry)?;
         let mut e = self.read_entry(loc)?;
@@ -1474,7 +1640,11 @@ struct Walk {
 }
 
 fn issue(code: &str, message: String) -> Issue {
-    Issue { code: code.into(), message, debug: false }
+    Issue {
+        code: code.into(),
+        message,
+        debug: false,
+    }
 }
 
 /// `1-3, 7, 9-12` for a sorted block list.
@@ -1486,7 +1656,11 @@ fn ranges(blocks: &[u64]) -> String {
         while j + 1 < blocks.len() && blocks[j + 1] == blocks[j] + 1 {
             j += 1;
         }
-        out.push(if i == j { blocks[i].to_string() } else { format!("{}-{}", blocks[i], blocks[j]) });
+        out.push(if i == j {
+            blocks[i].to_string()
+        } else {
+            format!("{}-{}", blocks[i], blocks[j])
+        });
         i = j + 1;
     }
     out.join(", ")

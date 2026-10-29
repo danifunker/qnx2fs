@@ -85,7 +85,10 @@ fn rejects_fat_and_blank_disks() {
     let mut fat = vec![0u8; 8192];
     fat[0..3].copy_from_slice(&[0xEB, 0x3C, 0x90]);
     assert!(!looks_like_qnx2(&mut Cursor::new(fat), 0));
-    assert!(matches!(Volume::open(Cursor::new(vec![0u8; 8192]), 0), Err(Error::NotQnx2)));
+    assert!(matches!(
+        Volume::open(Cursor::new(vec![0u8; 8192]), 0),
+        Err(Error::NotQnx2)
+    ));
 }
 
 #[test]
@@ -108,7 +111,10 @@ fn icon_dates_match_what_qnx_files_prints() {
     assert_eq!(show(0x0000, 0x02D0), "1980-01-01 00:12:00");
     assert_eq!(decode_date(0x0D00, 0), None, "month 13 is not a date");
     assert_eq!(decode_date(0x823C, 0), None, "30 February is not a date");
-    for t in [decode_date(0x5539, 0x2A91).unwrap(), decode_date(0xBA3A, 0x0642).unwrap()] {
+    for t in [
+        decode_date(0x5539, 0x2A91).unwrap(),
+        decode_date(0xBA3A, 0x0642).unwrap(),
+    ] {
         let [w0, w1] = encode_date(t);
         assert_eq!(decode_date(w0, w1), Some(t));
     }
@@ -135,9 +141,16 @@ fn owner_permissions_and_attributes_are_decoded() {
 fn deleted_entries_list_only_when_asked_and_read_back() {
     let mut vol = Volume::open(Cursor::new(sample_with_bitmap()), 0).unwrap();
     let root = vol.root();
-    assert!(!vol.list_dir(&root, false).unwrap().iter().any(|e| e.name == "GONE"));
+    assert!(!vol
+        .list_dir(&root, false)
+        .unwrap()
+        .iter()
+        .any(|e| e.name == "GONE"));
     let list = vol.list_dir(&root, true).unwrap();
-    let gone = list.iter().find(|e| e.name == "GONE").expect("deleted entry listed");
+    let gone = list
+        .iter()
+        .find(|e| e.name == "GONE")
+        .expect("deleted entry listed");
     assert_eq!(gone.deleted, Some(DeletedState::Recoverable));
     assert_eq!(vol.read_file(gone, usize::MAX).unwrap(), b"old");
     assert!(gone.describe().ends_with("deleted, recoverable"));
@@ -156,7 +169,10 @@ fn check_reports_orphans_and_unmarked_blocks() {
     let mut vol = Volume::open(Cursor::new(bad), 0).unwrap();
     let r = vol.check().unwrap();
     assert!(r.errors.iter().any(|e| e.code == "UnmarkedBlocks"));
-    assert!(r.warnings.iter().any(|w| w.code == "OrphanedBlocks" && w.message.ends_with(": 8")));
+    assert!(r
+        .warnings
+        .iter()
+        .any(|w| w.code == "OrphanedBlocks" && w.message.ends_with(": 8")));
 }
 
 #[test]
@@ -173,10 +189,22 @@ fn edits_round_trip_and_check_clean() {
     let mut vol = Volume::open(editable_sample(), 0).unwrap();
     let root = vol.root();
     let body: Vec<u8> = (0..1500u32).map(|i| i as u8).collect();
-    let f = vol.create_file(&root, "data.bin", &mut &body[..], body.len() as u64, &NewEntry::default()).unwrap();
+    let f = vol
+        .create_file(
+            &root,
+            "data.bin",
+            &mut &body[..],
+            body.len() as u64,
+            &NewEntry::default(),
+        )
+        .unwrap();
     assert_eq!(vol.read_file(&f, usize::MAX).unwrap(), body);
-    let d = vol.create_dir(&root, "newdir", &NewEntry::default()).unwrap();
-    let inner = vol.create_file(&d, "x", &mut &b"hi\x1e"[..], 3, &NewEntry::default()).unwrap();
+    let d = vol
+        .create_dir(&root, "newdir", &NewEntry::default())
+        .unwrap();
+    let inner = vol
+        .create_file(&d, "x", &mut &b"hi\x1e"[..], 3, &NewEntry::default())
+        .unwrap();
     assert_eq!(vol.read_file(&inner, usize::MAX).unwrap(), b"hi\x1e");
     // The new directory's header points back at its slot in the root.
     let loc = vol.self_loc(d.first).unwrap();
@@ -186,13 +214,21 @@ fn edits_round_trip_and_check_clean() {
     assert!(r.warnings.iter().all(|w| w.debug), "{:?}", r.warnings);
 
     vol.rename(&root, &f, "renamed").unwrap();
-    let names: Vec<String> = vol.list_dir(&root, false).unwrap().into_iter().map(|e| e.name).collect();
+    let names: Vec<String> = vol
+        .list_dir(&root, false)
+        .unwrap()
+        .into_iter()
+        .map(|e| e.name)
+        .collect();
     assert!(names.contains(&"renamed".to_string()) && !names.contains(&"data.bin".to_string()));
     let free_before = vol.free_blocks();
     let renamed = vol.lookup("/renamed").unwrap();
     vol.delete(&root, &renamed).unwrap();
     assert!(vol.free_blocks() > free_before);
-    assert!(vol.delete(&root, &d).is_err(), "a non-empty directory stays");
+    assert!(
+        vol.delete(&root, &d).is_err(),
+        "a non-empty directory stays"
+    );
     vol.delete(&d, &inner).unwrap();
     vol.delete(&root, &d).unwrap();
     let r = vol.check().unwrap();
@@ -217,11 +253,20 @@ fn names_and_extent_limits_follow_qnx() {
 fn sanitized_names_are_valid() {
     assert_eq!(sanitize_name("My Story.txt"), "My_Story.txt");
     assert_eq!(sanitize_name("$secret"), "secret");
-    assert_eq!(sanitize_name("a_very_long_file_name.txt"), "a_very_long_.txt");
+    assert_eq!(
+        sanitize_name("a_very_long_file_name.txt"),
+        "a_very_long_.txt"
+    );
     assert_eq!(sanitize_name("nodotbutverylongname"), "nodotbutverylong");
     assert_eq!(sanitize_name("é"), "_");
     assert_eq!(sanitize_name(""), "file");
-    for n in ["My Story.txt", "$secret", "a_very_long_file_name.txt", "x/y", "é"] {
+    for n in [
+        "My Story.txt",
+        "$secret",
+        "a_very_long_file_name.txt",
+        "x/y",
+        "é",
+    ] {
         assert!(validate_name(&sanitize_name(n)).is_ok(), "{n}");
     }
 }
@@ -245,15 +290,22 @@ fn a_dinit_diskette_takes_files_and_folders_by_path() {
     vol.put("/big.bin", &big, &NewEntry::default()).unwrap();
     // Enough files to grow the folder past its first ten slots.
     for i in 0..12 {
-        vol.put(&format!("/docs/f{i}"), b"x", &NewEntry::default()).unwrap();
+        vol.put(&format!("/docs/f{i}"), b"x", &NewEntry::default())
+            .unwrap();
     }
-    assert!(matches!(vol.put("/big.bin", b"again", &NewEntry::default()), Err(Error::AlreadyExists(_))));
+    assert!(matches!(
+        vol.put("/big.bin", b"again", &NewEntry::default()),
+        Err(Error::AlreadyExists(_))
+    ));
     assert!(matches!(vol.get("/nope"), Err(Error::NotFound(_))));
 
     // Read it all back from a fresh open of the same bytes.
     let img = vol.into_inner();
     let mut vol = Volume::open(img, 0).unwrap();
-    assert_eq!(rs_to_lf(&vol.get("/docs/notes").unwrap()), b"first line\nsecond line\n");
+    assert_eq!(
+        rs_to_lf(&vol.get("/docs/notes").unwrap()),
+        b"first line\nsecond line\n"
+    );
     assert_eq!(vol.get("/big.bin").unwrap(), big);
     assert_eq!(vol.list("/docs").unwrap().len(), 13);
     let r = vol.check().unwrap();
