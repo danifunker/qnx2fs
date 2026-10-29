@@ -7,6 +7,8 @@ fileserver.
 - List directories, read files, and check a volume (broken chains, cross-links,
   the free-block bitmap against what files hold, recoverable deleted files).
 - Create files and directories, delete, rename, change permissions and owners.
+- Copy files and folder trees between volumes (`copy_from`), and replace files
+  (`replace`), keeping permissions, owners and dates.
   Writes follow what QNX 4.10.01 itself writes, and were checked with its
   `chkfsys` on the [icon-emu](https://github.com/danifunker/icon-emu) emulator.
 - Convert text: QNX 2 ends lines with RS (`0x1E`) instead of LF.

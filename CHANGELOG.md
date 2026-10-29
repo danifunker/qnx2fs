@@ -3,6 +3,29 @@
 All notable changes to this crate are documented here. This project follows
 [Semantic Versioning](https://semver.org/).
 
+## 0.2.0
+
+Copying between volumes, and keeping metadata when files move or change.
+
+### Added
+- `Attributes`: an entry's QNX metadata exactly as stored (owner attributes,
+  group and other permissions, owner, raw date), from `Entry::attributes()`.
+- `NewEntry::attributes` (and `NewEntry::like(&entry)`): create an entry with
+  exactly that metadata. `mtime`, if also set, replaces the date.
+- `Volume::copy_from(&mut src, src_path, dst_dir, replace)`: copy a file or a
+  folder tree from another volume, keeping every entry's permissions, owner and
+  date (folders get their own date back after being filled). Existing folders
+  are merged into; existing files need `replace`. Copying `/` copies a disk's
+  contents without its `bitmap`. Returns a `CopyReport`.
+- `Volume::replace(path, data, opts)`: overwrite a file keeping its permissions
+  and owner, with a new date; checks the space first, so a full disk keeps the
+  old file.
+- `Volume::set_attributes(&entry, attributes)`.
+
+### Changed (breaking)
+- `NewEntry` has a new public field, `attributes`. Code that builds it with a
+  struct literal must add `..Default::default()` (or `attributes: None`).
+
 ## 0.1.0
 
 First release. Extracted from RustyBackup's QNX 2 support (same author) and

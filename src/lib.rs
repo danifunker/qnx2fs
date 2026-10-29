@@ -447,6 +447,18 @@ pub struct Entry {
 }
 
 impl Entry {
+    /// Its QNX metadata (permissions, owner, date), to give another entry.
+    pub fn attributes(&self) -> Attributes {
+        Attributes {
+            attr: self.attr & !DIRECTORY,
+            group_perms: self.group_perms,
+            other_perms: self.other_perms,
+            member: self.member,
+            group: self.group,
+            date: self.date,
+        }
+    }
+
     /// A reference to an entry by path and first block, enough for the edit calls.
     pub fn reference(path: &str, first: u32, is_dir: bool) -> Self {
         let name = path.rsplit('/').next().unwrap_or_default().to_string();
@@ -508,6 +520,29 @@ impl Entry {
     }
 }
 
+/// An entry's QNX 2 metadata exactly as stored, so it can be copied without
+/// going through Unix modes: owner attributes, group and other permissions,
+/// owner, and the raw date pair.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct Attributes {
+    /// Owner attributes (`rwaem` for files, `rcbm` for directories). The
+    /// directory bit (0x20) is ignored: the creating call sets it.
+    pub attr: u8,
+    pub group_perms: u8,
+    pub other_perms: u8,
+    pub member: u8,
+    pub group: u8,
+    /// The raw date pair (see [`decode_date`]).
+    pub date: [u16; 2],
+}
+
+/// What [`Volume::copy_from`] copied.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct CopyReport {
+    pub files: usize,
+    pub dirs: usize,
+}
+
 /// Settings for a new file or directory. Defaults match what QNX writes.
 #[derive(Debug, Clone, Copy, Default)]
 pub struct NewEntry {
@@ -519,6 +554,19 @@ pub struct NewEntry {
     pub gid: Option<u32>,
     /// Modification time, Unix seconds; default now.
     pub mtime: Option<i64>,
+    /// Copy these exactly instead (permissions, owner and date); `mode`,
+    /// `uid` and `gid` are then ignored, and `mtime`, if set, replaces the date.
+    pub attributes: Option<Attributes>,
+}
+
+impl NewEntry {
+    /// The same metadata as `entry`.
+    pub fn like(entry: &Entry) -> Self {
+        NewEntry {
+            attributes: Some(entry.attributes()),
+            ..Default::default()
+        }
+    }
 }
 
 /// One decoded directory entry, in use or deleted.
@@ -1415,10 +1463,33 @@ impl<D: Read + Write + Seek> Volume<D> {
     }
 
     fn owner_of(opts: &NewEntry) -> (u8, u8) {
+        if let Some(a) = opts.attributes {
+            return (a.member, a.group);
+        }
         (
             opts.uid.map_or(255, |u| u.min(255) as u8),
             opts.gid.map_or(255, |g| g.min(255) as u8),
         )
+    }
+
+    /// (owner attributes, group, other) for a new entry: copied, from a mode, or QNX's defaults.
+    fn bits_of(opts: &NewEntry, dir: bool) -> (u8, u8, u8) {
+        let flag = if dir { DIRECTORY } else { 0 };
+        match (opts.attributes, opts.mode) {
+            (Some(a), _) => ((a.attr & !DIRECTORY) | flag, a.group_perms, a.other_perms),
+            (None, Some(m)) => qnx_bits(m, dir),
+            (None, None) if dir => (0x35, 0x21, 0x21),
+            (None, None) => (0x17, 0x01, 0x01),
+        }
+    }
+
+    /// The date pair for a new entry: `mtime`, else copied, else now.
+    fn date_of(&self, opts: &NewEntry) -> [u16; 2] {
+        match (opts.mtime, opts.attributes) {
+            (Some(t), _) => encode_date(t),
+            (None, Some(a)) => a.date,
+            (None, None) => encode_date(self.now()),
+        }
     }
 
     /// Create a file of `len` bytes read from `data` in directory `parent`.
@@ -1437,8 +1508,8 @@ impl<D: Read + Write + Seek> Volume<D> {
         }
         let runs = self.allocate(len)?;
         let (last, blocks) = self.write_chain(&runs, data, len)?;
-        let bits = opts.mode.map_or((0x17, 0x01, 0x01), |m| qnx_bits(m, false));
-        let when = opts.mtime.unwrap_or_else(|| self.now());
+        let bits = Self::bits_of(opts, false);
+        let date = self.date_of(opts);
         let e = Self::new_entry(
             name,
             runs[0].0,
@@ -1447,7 +1518,7 @@ impl<D: Read + Write + Seek> Volume<D> {
             runs.len(),
             Self::owner_of(opts),
             bits,
-            encode_date(when),
+            date,
         );
         let slot = self.free_slot(dir)?;
         self.write_entry(EntryLoc { dir, slot }, &e)?;
@@ -1472,18 +1543,9 @@ impl<D: Read + Write + Seek> Volume<D> {
         body[0..2].copy_from_slice(&parent_xtnt.to_le_bytes());
         body[2..4].copy_from_slice(&(slot as u16).to_le_bytes());
         self.write_block_bytes(nb, XTNT_HDR, &body)?;
-        let bits = opts.mode.map_or((0x35, 0x21, 0x21), |m| qnx_bits(m, true));
-        let when = opts.mtime.unwrap_or_else(|| self.now());
-        let e = Self::new_entry(
-            name,
-            nb,
-            nb,
-            1,
-            1,
-            Self::owner_of(opts),
-            bits,
-            encode_date(when),
-        );
+        let bits = Self::bits_of(opts, true);
+        let date = self.date_of(opts);
+        let e = Self::new_entry(name, nb, nb, 1, 1, Self::owner_of(opts), bits, date);
         self.write_entry(EntryLoc { dir, slot }, &e)?;
         self.touch_dir(dir)?;
         Ok(self.entry_for(&parent.path, &Dirent::decode(&e)))
@@ -1593,6 +1655,132 @@ impl<D: Read + Write + Seek> Volume<D> {
         let dir = self.lookup(&parent)?;
         let e = self.lookup(path)?;
         self.rename(&dir, &e, new_name)
+    }
+
+    /// Give `entry` exactly these permissions, owner and date.
+    pub fn set_attributes(&mut self, entry: &Entry, a: Attributes) -> Result<()> {
+        let loc = self.loc_of(entry)?;
+        let mut e = self.read_entry(loc)?;
+        let dir = e[26] & DIRECTORY;
+        e[15] = a.member;
+        e[16] = a.group;
+        e[24] = a.group_perms;
+        e[25] = a.other_perms;
+        e[26] = (a.attr & !DIRECTORY) | dir;
+        e[27..29].copy_from_slice(&a.date[0].to_le_bytes());
+        e[29..31].copy_from_slice(&a.date[1].to_le_bytes());
+        self.write_entry(loc, &e)
+    }
+
+    /// Write `data` at `path`. A file already there is replaced and its
+    /// permissions and owner kept, dated now (or `opts.mtime`); otherwise the
+    /// file is created with `opts`. The space is checked before the old file
+    /// goes, so a full disk leaves it in place.
+    pub fn replace(&mut self, path: &str, data: &[u8], opts: &NewEntry) -> Result<Entry> {
+        let old = match self.lookup(path) {
+            Ok(e) if e.is_dir => {
+                return Err(Error::AlreadyExists(format!("{path} is a directory")))
+            }
+            Ok(e) => e,
+            Err(Error::NotFound(_)) => return self.put(path, data, opts),
+            Err(e) => return Err(e),
+        };
+        let need = blocks_for(data.len() as u64);
+        if need > self.free_blocks + u64::from(old.blocks) {
+            return Err(Error::DiskFull(format!(
+                "{} bytes do not fit in {} free blocks",
+                data.len(),
+                self.free_blocks + u64::from(old.blocks)
+            )));
+        }
+        let mut o = *opts;
+        if o.attributes.is_none() {
+            o.attributes = Some(old.attributes());
+        }
+        if o.mtime.is_none() {
+            o.mtime = Some(self.now());
+        }
+        self.remove(path)?;
+        self.put(path, data, &o)
+    }
+
+    /// Copy the file or folder at `src_path` on another volume into the folder
+    /// `dst_dir` here, under the same name; a folder comes with everything in
+    /// it. Every entry keeps its permissions, owner and date. A folder that
+    /// already exists here is merged into; a file that exists is an error
+    /// unless `replace`. Copying a volume's root (`/`) copies its contents,
+    /// except the free-space `bitmap`.
+    pub fn copy_from<S: Read + Seek>(
+        &mut self,
+        src: &mut Volume<S>,
+        src_path: &str,
+        dst_dir: &str,
+        replace: bool,
+    ) -> Result<CopyReport> {
+        let mut report = CopyReport::default();
+        let dir = self.lookup(dst_dir)?;
+        if !dir.is_dir {
+            return Err(Error::InvalidData(format!("{dst_dir} is not a directory")));
+        }
+        let e = src.lookup(src_path)?;
+        if src_path.trim_matches('/').is_empty() {
+            for child in src.list("/")? {
+                if child.name != "bitmap" {
+                    self.copy_entry(src, &child, &dir.path, replace, &mut report)?;
+                }
+            }
+        } else {
+            self.copy_entry(src, &e, &dir.path, replace, &mut report)?;
+        }
+        Ok(report)
+    }
+
+    fn copy_entry<S: Read + Seek>(
+        &mut self,
+        src: &mut Volume<S>,
+        e: &Entry,
+        dst_dir: &str,
+        replace: bool,
+        report: &mut CopyReport,
+    ) -> Result<()> {
+        let target = join(dst_dir, &e.name);
+        let existing = match self.lookup(&target) {
+            Ok(t) => Some(t),
+            Err(Error::NotFound(_)) => None,
+            Err(x) => return Err(x),
+        };
+        if e.is_dir {
+            let created = match existing {
+                Some(t) if t.is_dir => false,
+                Some(_) => return Err(Error::AlreadyExists(target)),
+                None => {
+                    self.mkdir(&target, &NewEntry::like(e))?;
+                    report.dirs += 1;
+                    true
+                }
+            };
+            for child in src.list(&e.path)? {
+                self.copy_entry(src, &child, &target, replace, report)?;
+            }
+            // Adding entries re-dated the folder; give a copied folder its own date back.
+            if created {
+                let t = self.lookup(&target)?;
+                self.set_attributes(&t, e.attributes())?;
+            }
+        } else {
+            match existing {
+                Some(t) if t.is_dir => {
+                    return Err(Error::AlreadyExists(format!("{target} is a directory")))
+                }
+                Some(_) if !replace => return Err(Error::AlreadyExists(target)),
+                Some(_) => self.remove(&target)?,
+                None => {}
+            }
+            let data = src.read_file(e, usize::MAX)?;
+            self.put(&target, &data, &NewEntry::like(e))?;
+            report.files += 1;
+        }
+        Ok(())
     }
 }
 

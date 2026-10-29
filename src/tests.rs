@@ -332,3 +332,122 @@ fn a_dinit_diskette_takes_files_and_folders_by_path() {
     assert_eq!(vol.free_blocks(), free);
     assert!(vol.check().unwrap().is_clean());
 }
+
+#[test]
+fn copies_between_volumes_keep_permissions_owners_and_dates() {
+    let (Some(a), Some(b)) = (blank_640k(), blank_640k()) else {
+        eprintln!("skipped: tests/fixtures/blank640-head.bin is not present");
+        return;
+    };
+    let mut src = Volume::open(a, 0).unwrap();
+    let mut dst = Volume::open(b, 0).unwrap();
+    let old = decode_date(0x5539, 0x2A91).unwrap(); // 28-May-85 3:01pm
+    src.set_clock(old);
+    let exe = NewEntry {
+        mode: Some(0o755),
+        uid: Some(4),
+        gid: Some(12),
+        mtime: Some(old),
+        ..Default::default()
+    };
+    src.mkdir(
+        "/util",
+        &NewEntry {
+            mtime: Some(old),
+            ..Default::default()
+        },
+    )
+    .unwrap();
+    src.put("/util/logo", b"\x01\x02program", &exe).unwrap();
+    src.mkdir(
+        "/util/deep",
+        &NewEntry {
+            mtime: Some(old),
+            ..Default::default()
+        },
+    )
+    .unwrap();
+    src.put(
+        "/util/deep/notes",
+        b"text\x1e",
+        &NewEntry {
+            mtime: Some(old),
+            ..Default::default()
+        },
+    )
+    .unwrap();
+    // Make the source folder's own date old again (adding entries re-dates it).
+    let u = src.lookup("/util").unwrap();
+    let mut ua = u.attributes();
+    ua.date = encode_date(old);
+    src.set_attributes(&u, ua).unwrap();
+
+    dst.set_clock(decode_date(0xBA3A, 0x0642).unwrap()); // a later "now" on the target
+    let r = dst.copy_from(&mut src, "/util", "/", false).unwrap();
+    assert_eq!(r, CopyReport { files: 2, dirs: 2 });
+    for p in ["/util", "/util/logo", "/util/deep", "/util/deep/notes"] {
+        let (s, d) = (src.lookup(p).unwrap(), dst.lookup(p).unwrap());
+        assert_eq!(s.attributes(), d.attributes(), "{p}");
+        assert_eq!(s.is_dir, d.is_dir);
+    }
+    assert_eq!(dst.lookup("/util/logo").unwrap().unix_mode(), 0o100755);
+    assert_eq!(dst.lookup("/util/logo").unwrap().owner_label(), "12.4");
+    assert_eq!(dst.lookup("/util").unwrap().modified(), Some(old));
+    assert_eq!(dst.get("/util/logo").unwrap(), b"\x01\x02program");
+
+    // Copying again: an existing file is an error unless replace; folders merge.
+    assert!(matches!(
+        dst.copy_from(&mut src, "/util", "/", false),
+        Err(Error::AlreadyExists(_))
+    ));
+    assert_eq!(
+        dst.copy_from(&mut src, "/util", "/", true).unwrap(),
+        CopyReport { files: 2, dirs: 0 }
+    );
+
+    // The whole disk: everything but the bitmap, into a folder.
+    dst.mkdir("/all", &NewEntry::default()).unwrap();
+    let r = dst.copy_from(&mut src, "/", "/all", false).unwrap();
+    assert_eq!(r, CopyReport { files: 2, dirs: 2 });
+    assert!(dst.lookup("/all/bitmap").is_err());
+    assert!(dst.check().unwrap().is_clean());
+}
+
+#[test]
+fn replace_keeps_permissions_and_owner_with_a_new_date() {
+    let Some(img) = blank_640k() else { return };
+    let mut vol = Volume::open(img, 0).unwrap();
+    let old = decode_date(0x5539, 0x2A91).unwrap();
+    vol.set_clock(old);
+    let exe = NewEntry {
+        mode: Some(0o755),
+        uid: Some(4),
+        gid: Some(12),
+        ..Default::default()
+    };
+    vol.put("/prog", b"v1", &exe).unwrap();
+    let now = decode_date(0xBA3A, 0x0642).unwrap();
+    vol.set_clock(now);
+    let e = vol
+        .replace("/prog", b"version two", &NewEntry::default())
+        .unwrap();
+    assert_eq!(e.unix_mode(), 0o100755);
+    assert_eq!(e.owner_label(), "12.4");
+    assert_eq!(e.modified(), Some(now));
+    assert_eq!(vol.get("/prog").unwrap(), b"version two");
+    // A new name: created with the given settings.
+    assert_eq!(
+        vol.replace("/fresh", b"x", &NewEntry::default())
+            .unwrap()
+            .unix_mode(),
+        0o100644
+    );
+    // Too big for the disk: refused, and the old file is still there.
+    let huge = vec![0u8; 700_000];
+    assert!(matches!(
+        vol.replace("/prog", &huge, &NewEntry::default()),
+        Err(Error::DiskFull(_))
+    ));
+    assert_eq!(vol.get("/prog").unwrap(), b"version two");
+    assert!(vol.check().unwrap().is_clean());
+}
