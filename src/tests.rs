@@ -56,12 +56,17 @@ fn editable_sample() -> Cursor<Vec<u8>> {
     Cursor::new(img)
 }
 
-/// A 640K (1280-block) diskette exactly as the ICON's `dinit 2` leaves it.
-fn blank_640k() -> Cursor<Vec<u8>> {
-    let head = include_bytes!("../tests/fixtures/blank640-head.bin");
+/// A 640K (1280-block) diskette exactly as the ICON's `dinit 2` leaves it, or
+/// `None` when the fixture is absent (it is kept out of the published crate).
+fn blank_640k() -> Option<Cursor<Vec<u8>>> {
+    let path = concat!(
+        env!("CARGO_MANIFEST_DIR"),
+        "/tests/fixtures/blank640-head.bin"
+    );
+    let head = std::fs::read(path).ok()?;
     let mut img = vec![0u8; 655_360];
-    img[..head.len()].copy_from_slice(head);
-    Cursor::new(img)
+    img[..head.len()].copy_from_slice(&head);
+    Some(Cursor::new(img))
 }
 
 #[test]
@@ -273,7 +278,11 @@ fn sanitized_names_are_valid() {
 
 #[test]
 fn a_dinit_diskette_takes_files_and_folders_by_path() {
-    let mut vol = Volume::open(blank_640k(), 0).unwrap();
+    let Some(blank) = blank_640k() else {
+        eprintln!("skipped: tests/fixtures/blank640-head.bin is not present");
+        return;
+    };
+    let mut vol = Volume::open(blank, 0).unwrap();
     vol.set_clock(decode_date(0xBA3A, 0x0642).unwrap());
     assert_eq!(vol.total_blocks(), 1280);
     let names: Vec<String> = vol.list("/").unwrap().into_iter().map(|e| e.name).collect();

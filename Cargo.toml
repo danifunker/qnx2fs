@@ -10,4 +10,9 @@ keywords = ["qnx", "filesystem", "retrocomputing", "icon"]
 categories = ["filesystem", "parser-implementations"]
 rust-version = "1.73"
 
+# Test fixtures are development-only; the release pipeline enforces a slim
+# tarball (no `.bin`, under 2 MB). The unit tests that read them only build
+# from the repository.
+exclude = ["tests/fixtures/*", ".github/*", "CLAUDE.md"]
+
 [dependencies]
