@@ -1,0 +1,13 @@
+[package]
+name = "qnx2fs"
+version = "0.1.0"
+edition = "2021"
+license = "MIT"
+authors = ["Dani Sarfati <dani@funkervogt.com>"]
+description = "Read and write QNX 2 filesystems (QNX 2.x, the Unisys ICON and LEXICON)"
+repository = "https://github.com/danifunker/qnx2fs"
+keywords = ["qnx", "filesystem", "retrocomputing", "icon"]
+categories = ["filesystem", "parser-implementations"]
+rust-version = "1.73"
+
+[dependencies]
