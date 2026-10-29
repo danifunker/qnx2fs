@@ -65,7 +65,12 @@
 //!
 //! Writes stamp dates. The crate takes "now" from [`Volume::set_clock`] when it
 //! has been set, otherwise from the system clock. On `wasm32-unknown-unknown`,
-//! which has no clock, set it, or dates come out as 1 January 1980.
+//! which has no clock, set it, or dates come out as 1 January 1994.
+//!
+//! An ICON date holds only the years 1980-1995. Dates outside that range, for
+//! "now" and for `NewEntry::mtime`, are **folded** ([`fold_date`]): same month,
+//! day and time, in 1994 (29 February in 1992), as icon-emu's clock does.
+//! Copied [`Attributes`] keep their stored date exactly.
 
 use std::collections::{HashMap, HashSet};
 use std::fmt;
@@ -186,7 +191,28 @@ pub fn decode_date(w0: u16, w1: u16) -> Option<i64> {
     Some(days_from_civil(year, month, day) * 86400 + pm + i64::from(w1))
 }
 
-/// Encode Unix seconds as an ICON date pair; the 4-bit year holds 1980-1995, so other times clamp.
+/// Move a date the ICON can't store into its 1980-1995 range: the same month,
+/// day and time of day, in **1994**. 29 February becomes 29 February **1992**,
+/// the last leap year the ICON can store. Dates already in 1980-1995 are kept.
+///
+/// 1994 is late enough that these dates sort after all the ICON system
+/// software (the last release is from 1991), and early enough that a clock
+/// running past New Year's Eve moves into 1995, which can still be stored.
+/// icon-emu's emulated clock reads the host clock the same way. The year itself
+/// is lost: an ICON's login screen shows the date it is using, worth a look at
+/// start-up.
+pub fn fold_date(unix: i64) -> i64 {
+    let (y, m, d) = civil_from_days(unix.div_euclid(86400));
+    if (1980..=1995).contains(&y) {
+        return unix;
+    }
+    let year = if (m, d) == (2, 29) { 1992 } else { 1994 };
+    days_from_civil(year, m, d) * 86400 + unix.rem_euclid(86400)
+}
+
+/// Encode Unix seconds as an ICON date pair; the 4-bit year holds 1980-1995, so
+/// other times clamp. To write a modern date the way the crate does, fold it
+/// first: `encode_date(fold_date(t))`.
 pub fn encode_date(unix: i64) -> [u16; 2] {
     let lo = days_from_civil(1980, 1, 1) * 86400;
     let hi = days_from_civil(1995, 12, 31) * 86400 + 86399;
@@ -552,7 +578,8 @@ pub struct NewEntry {
     pub uid: Option<u32>,
     /// Group number (0-255); default 255.
     pub gid: Option<u32>,
-    /// Modification time, Unix seconds; default now.
+    /// Modification time, Unix seconds; default now. Dates after 1995 (or
+    /// before 1980) are folded: see [`fold_date`].
     pub mtime: Option<i64>,
     /// Copy these exactly instead (permissions, owner and date); `mode`,
     /// `uid` and `gid` are then ignored, and `mtime`, if set, replaces the date.
@@ -724,8 +751,9 @@ impl<D: Read + Seek> Volume<D> {
         self.clock = Some(unix);
     }
 
+    /// "Now" for the dates edits write, folded into the ICON's range.
     fn now(&self) -> i64 {
-        self.clock.unwrap_or_else(system_now)
+        fold_date(self.clock.unwrap_or_else(system_now))
     }
 
     /// Blocks in the volume (512 bytes each).
@@ -1486,7 +1514,7 @@ impl<D: Read + Write + Seek> Volume<D> {
     /// The date pair for a new entry: `mtime`, else copied, else now.
     fn date_of(&self, opts: &NewEntry) -> [u16; 2] {
         match (opts.mtime, opts.attributes) {
-            (Some(t), _) => encode_date(t),
+            (Some(t), _) => encode_date(fold_date(t)),
             (None, Some(a)) => a.date,
             (None, None) => encode_date(self.now()),
         }

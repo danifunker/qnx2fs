@@ -3,7 +3,30 @@
 All notable changes to this crate are documented here. This project follows
 [Semantic Versioning](https://semver.org/).
 
-## 0.2.0
+## 0.3.0
+
+Modern dates are folded into the ICON's range instead of clamped.
+
+An ICON date holds only the years 1980-1995. Until now a date outside that
+range, such as any file from a modern computer, was written as 31 December 1995
+11:59:59 pm.
+
+### Added
+- `fold_date(unix)`: the same month, day and time of day in **1994**, with
+  29 February going to **1992**, the last leap year the ICON can store. Dates
+  already in 1980-1995 are kept. 1994 sorts after all the ICON system software
+  (the last release is from 1991), and a clock running past New Year's Eve moves
+  into 1995, which can still be stored. icon-emu's emulated clock uses the same
+  rule.
+
+### Changed
+- "Now" (from `set_clock` or the system clock) and `NewEntry::mtime` are folded
+  with `fold_date` before they are written. `encode_date` itself still clamps;
+  call `encode_date(fold_date(t))` to get the new behaviour from it.
+- Without `set_clock` on `wasm32-unknown-unknown`, dates come out as
+  1 January 1994 (it was 1 January 1980).
+
+
 
 Copying between volumes, and keeping metadata when files move or change.
 

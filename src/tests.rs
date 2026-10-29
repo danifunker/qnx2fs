@@ -451,3 +451,53 @@ fn replace_keeps_permissions_and_owner_with_a_new_date() {
     assert_eq!(vol.get("/prog").unwrap(), b"version two");
     assert!(vol.check().unwrap().is_clean());
 }
+
+#[test]
+fn modern_dates_fold_into_1994_keeping_day_and_time() {
+    let at = |y: i64, m: u32, d: u32, h: i64| days_from_civil(y, m, d) * 86400 + h * 3600;
+    assert_eq!(
+        format_date(fold_date(at(2026, 3, 14, 10))),
+        "1994-03-14 10:00:00"
+    );
+    // Other days of a leap year also go to 1994; only 29 February needs 1992.
+    assert_eq!(
+        format_date(fold_date(at(2024, 3, 1, 8))),
+        "1994-03-01 08:00:00"
+    );
+    assert_eq!(
+        format_date(fold_date(at(2024, 2, 29, 23))),
+        "1992-02-29 23:00:00"
+    );
+    assert_eq!(
+        format_date(fold_date(at(1970, 1, 1, 0))),
+        "1994-01-01 00:00:00"
+    );
+    // Past New Year's Eve the clock reaches 1995, which still encodes.
+    let nye = fold_date(at(2026, 12, 31, 23)) + 2 * 3600;
+    assert_eq!(
+        decode_date(encode_date(nye)[0], encode_date(nye)[1]),
+        Some(nye)
+    );
+    assert_eq!(format_date(nye), "1995-01-01 01:00:00");
+    // Dates the ICON can hold are kept.
+    let old = decode_date(0x5539, 0x2A91).unwrap();
+    assert_eq!(fold_date(old), old);
+    // New entries and "now" are folded; encode_date on its own still clamps.
+    let Some(img) = blank_640k() else { return };
+    let mut vol = Volume::open(img, 0).unwrap();
+    vol.set_clock(at(2026, 10, 29, 16));
+    let e = vol.put("/now", b"x", &NewEntry::default()).unwrap();
+    assert_eq!(format_date(e.modified().unwrap()), "1994-10-29 16:00:00");
+    let e = vol
+        .put(
+            "/then",
+            b"x",
+            &NewEntry {
+                mtime: Some(at(2024, 2, 29, 9)),
+                ..Default::default()
+            },
+        )
+        .unwrap();
+    assert_eq!(format_date(e.modified().unwrap()), "1992-02-29 09:00:00");
+    assert_eq!(encode_date(at(2026, 1, 1, 0))[0] >> 12, 15);
+}
