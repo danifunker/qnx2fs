@@ -34,9 +34,52 @@ hard disks, partition types 07, 08 and 09 hold QNX 2, and the partition's start
 field is a 1-based block number: the volume starts at byte
 `(start - 1) * 512`.
 
-Dates: the ICON stores local time with a 4-bit year (1980-1995). Edits stamp the
-time set with `Volume::set_clock`, or the system clock. On
-`wasm32-unknown-unknown` there is no clock, so set it.
+## Dates
+
+A QNX 2 date is two 16-bit words. The first holds the year minus 1980 in 4
+bits, plus the month, the day and AM/PM; the second holds the seconds since 12
+o'clock. It is the local time of the machine that wrote it, with no time zone.
+So **only the years 1980 to 1995 can be stored**.
+
+Dates already on a disk are no problem:
+- **Reading** gives the exact date (`Entry::modified`, `decode_date`). Treat it
+  as local wall-clock time; to turn it into a host timestamp, interpret it in
+  the host's time zone.
+- **Copying** between QNX 2 volumes (`copy_from`, `NewEntry::like`) copies the
+  stored date words exactly.
+
+Modern dates can't be stored, so the crate **folds** them with `fold_date`
+before writing. This applies to "now" (`Volume::set_clock`, or the system
+clock) and to `NewEntry::mtime`:
+
+- **The same month, day and time of day, in 1994.**
+- **29 February goes to 1992**, the last leap year the ICON can store.
+- Dates already in 1980–1995 are kept as they are.
+
+| Date | Written as |
+|---|---|
+| 2026-03-14 10:00 | 1994-03-14 10:00 |
+| 2024-02-29 09:00 | 1992-02-29 09:00 |
+| 2024-03-01 08:00 | 1994-03-01 08:00 |
+| 1988-03-23 16:05 | 1988-03-23 16:05 (unchanged) |
+
+Why 1994:
+- **It sorts after the real ICON software.** The last ICON system software is
+  from 1991, so new and imported files look newer than anything original.
+- **It survives New Year's Eve.** A clock left running past midnight on 31
+  December moves into 1995, which can still be stored. (With 1995, it would
+  roll into 1996, which wraps round to 1980.)
+- **It is the rule icon-emu's emulated ICON clock uses**, so files written by
+  this crate match the files QNX itself writes in the emulator.
+
+The year itself is lost, so it is worth checking what an ICON thinks the date
+is: its login screen shows it at start-up.
+
+`encode_date` on its own still clamps to 1980-01-01 … 1995-12-31 23:59:59; call
+`encode_date(fold_date(t))` to get the folded date.
+
+On `wasm32-unknown-unknown` there is no system clock: call `Volume::set_clock`,
+or new dates come out as 1 January 1994.
 
 Used by [icon-emu](https://github.com/danifunker/icon-emu) and
 [RustyBackup](https://github.com/danifunker/rusty-backup).
