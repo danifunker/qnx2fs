@@ -3,6 +3,15 @@
 All notable changes to this crate are documented here. This project follows
 [Semantic Versioning](https://semver.org/).
 
+## 0.3.1
+
+### Added
+- Optional `disk-core` feature: `qnx2fs::adapter` puts a `Volume` behind the
+  [disk-core](https://crates.io/crates/disk-core) `Filesystem` /
+  `EditableFilesystem` traits, with `From` conversions for `Error` and
+  `Attributes`. It moved here from RustyBackup unchanged. The default build
+  still has no dependencies.
+
 ## 0.3.0
 
 Modern dates are folded into the ICON's range instead of clamped.

@@ -84,6 +84,14 @@ or new dates come out as 1 January 1994.
 Used by [icon-emu](https://github.com/danifunker/icon-emu) and
 [RustyBackup](https://github.com/danifunker/rusty-backup).
 
+## The `disk-core` feature
+
+Off by default. It adds `qnx2fs::adapter`, which puts a `Volume` behind the
+`Filesystem` / `EditableFilesystem` traits of the
+[disk-core](https://crates.io/crates/disk-core) crate, as RustyBackup uses it.
+It pulls in `disk-core`, `chrono` and `log`, and reads the host clock and time zone,
+so it is not for the browser build.
+
 ## License
 
 MIT. See [LICENSE](LICENSE).

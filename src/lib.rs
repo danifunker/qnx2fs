@@ -1882,5 +1882,8 @@ fn ranges(blocks: &[u64]) -> String {
     out.join(", ")
 }
 
+#[cfg(feature = "disk-core")]
+pub mod adapter;
+
 #[cfg(test)]
 mod tests;

@@ -49,6 +49,7 @@ To cut a new release, bump the version — the pipeline owns the tag.
   so no std API newer than that (CI's MSRV job checks it).
 - **No dependencies, and WebAssembly-safe.** icon-emu runs it in the browser:
   never call the system clock directly; go through `Volume::now` (which honours
-  `set_clock`).
+  `set_clock`). The one exception is the optional `disk-core` feature
+  (`src/adapter.rs`, RustyBackup's adapter), which may use its own dependencies.
 - **Writes follow QNX 4.10.01.** Any change to how something is written should be
   checked with QNX's own `chkfsys` in icon-emu before release.
