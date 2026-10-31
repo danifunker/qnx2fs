@@ -3,6 +3,14 @@
 All notable changes to this crate are documented here. This project follows
 [Semantic Versioning](https://semver.org/).
 
+## 0.3.2
+
+### Changed
+- The `disk-core` feature accepts disk-core 0.1 or 0.2 (`>=0.1, <0.3`). The
+  adapter uses only the filesystem and entry interfaces, which 0.2 leaves
+  unchanged; 0.2 dropped Unix-only helpers this crate never used. Tested
+  against both.
+
 ## 0.3.1
 
 ### Added
